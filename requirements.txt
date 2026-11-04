@@ -1,0 +1,4 @@
+# Tested with Python 3.11.17, OpenCV 5.0.0, NumPy 2.4.6, Ultralytics 8.4.178
+opencv-python
+numpy
+ultralytics
