@@ -1,5 +1,5 @@
 """
-PHASE 1 — LANE BOUNDARIES AND ESTIMATED LANE AREA  (revision 4)
+PHASE 1 — LANE BOUNDARIES AND ESTIMATED LANE AREA  (revision 5)
 
 How it works:
     * Marking pixels: yellow + white, with white thresholds that rise
@@ -18,6 +18,14 @@ How it works:
     * A boundary that was part of an accepted lane and goes missing for
       a few frames is held (and reported as held). Lines are drawn on
       the video only when the lane area is accepted.
+
+Revision 5 changes (found by measuring revision 4 on a second video):
+    * Yellow paint must be brighter than the road, like white paint.
+      Sunlit roadside grass falls inside the yellow hue band but is no
+      brighter than the asphalt, and was being accepted as a boundary.
+    * The vanishing point is learned per video, like the lane width.
+      The fixed limit assumed one camera pitch and rejected correct
+      lane pairs when the horizon sat slightly lower in the frame.
 
 The region of interest can be set per video:
     LaneDetector(roi_bottom=0.89)          # stop above a visible hood
@@ -51,7 +59,7 @@ import numpy as np
 
 
 # Shown by Phase 3 so you can confirm which Phase 1 file is imported.
-VERSION = "revision 4"
+VERSION = "revision 5"
 
 
 # ------------------------------------------------------------
@@ -99,6 +107,8 @@ FAINT_ABOVE_ROAD = 30          # ... and at least this far above the road
 YELLOW_HUE = (17, 34)          # OpenCV hue range of yellow paint
 YELLOW_MIN_SATURATION = 70     # dirt is below/above this hue band and
 YELLOW_MIN_VALUE = 80          # sunlit foliage above it
+YELLOW_ABOVE_ROAD = 35         # yellow paint is brighter than the road;
+                               # roadside grass in the same hue is not
 MAX_MASK_FILL = 0.30           # above this the frame is unreadable
 GLARE_ROAD_LEVEL = 210         # median road lightness that means glare
 
@@ -134,7 +144,9 @@ LANE_WIDTH_RESET_FRAMES = 45
 MIN_TOP_WIDTH = 0.03              # area starts where the lane is this wide
 MIN_SHARED_SPAN = 0.12
 VANISHING_Y_MIN = 0.30
-VANISHING_Y_ABOVE_ROI = 0.05      # VP may sit this far below the ROI top
+VANISHING_Y_ABOVE_ROI = 0.12      # VP may sit this far below the ROI top
+VANISHING_LOCK_FRAMES = 5         # accepted pairs before the VP is learned
+VANISHING_Y_TOLERANCE = 0.05      # then a pair's VP must stay this close
 VANISHING_X_RANGE = (0.10, 0.90)
 
 # Tracking
@@ -259,6 +271,8 @@ class LaneDetector:
         self.jumps = {"left": 0, "right": 0}
         self.lane_width = None
         self.width_frames = 0
+        self.vanishing_y = None
+        self.vanishing_frames = 0
         self.frames_without_pair = 0
         self.last_mask = None
         self.last_debug = None
@@ -299,10 +313,13 @@ class LaneDetector:
         road_level = float(np.median(road)) if road.size else 0.0
         self.last_road_level = road_level
 
+        yellow_min_value = int(min(
+            255, max(YELLOW_MIN_VALUE, road_level + YELLOW_ABOVE_ROAD)
+        ))
         yellow = cv2.inRange(
             hsv,
             np.array([YELLOW_HUE[0], YELLOW_MIN_SATURATION,
-                      YELLOW_MIN_VALUE], dtype=np.uint8),
+                      yellow_min_value], dtype=np.uint8),
             np.array([YELLOW_HUE[1], 255, 255], dtype=np.uint8),
         )
 
@@ -773,7 +790,16 @@ class LaneDetector:
         ):
             return False, "Implausible vanishing point", None
 
-        return True, "Boundary pair accepted", (start, stop)
+        # Once learned, the horizon height should stay put; a pair that
+        # implies a very different horizon is probably a wrong line.
+        if (
+            self.vanishing_y is not None
+            and self.vanishing_frames >= VANISHING_LOCK_FRAMES
+            and abs(vy - self.vanishing_y) > VANISHING_Y_TOLERANCE
+        ):
+            return False, "Vanishing point differs from learned one", None
+
+        return True, "Boundary pair accepted", (start, stop, float(vy))
 
     def select_pair(self, lefts, rights):
         """Prefer the innermost valid pair, then continuity, then support."""
@@ -888,8 +914,15 @@ class LaneDetector:
         self.previous[side] = dict(fit, paired=False)
         return fit, False
 
-    def update_lane_width(self, left, right, valid):
+    def update_lane_width(self, left, right, valid, vanishing_y=None):
         if valid:
+            if vanishing_y is not None:
+                self.vanishing_y = (
+                    vanishing_y if self.vanishing_y is None
+                    else 0.9 * self.vanishing_y + 0.1 * vanishing_y
+                )
+                self.vanishing_frames += 1
+
             width = float(x_at(right, self.bottom) - x_at(left, self.bottom))
             self.frames_without_pair = 0
             self.lane_width = (
@@ -905,6 +938,8 @@ class LaneDetector:
         if self.frames_without_pair >= LANE_WIDTH_RESET_FRAMES:
             self.lane_width = None
             self.width_frames = 0
+            self.vanishing_y = None
+            self.vanishing_frames = 0
 
     # -------------------- main entry --------------------
 
@@ -936,7 +971,9 @@ class LaneDetector:
         right, right_held = self.track(measured_right, "right")
 
         valid, reason, shared = self.check_pair(left, right)
-        self.update_lane_width(left, right, valid)
+        self.update_lane_width(
+            left, right, valid, shared[2] if valid else None
+        )
 
         # Only boundaries of an accepted lane may be held later.
         for side, held in (("left", left_held), ("right", right_held)):
@@ -954,7 +991,7 @@ class LaneDetector:
             reason += f" (holding {' + '.join(held)})"
 
         if valid:
-            start, stop = shared
+            start, stop, _ = shared
             left_points = make_polyline(left, h, w, start, stop)
             right_points = make_polyline(right, h, w, start, stop)
         else:
@@ -989,6 +1026,7 @@ class LaneDetector:
             "left_candidates": len(lefts),
             "right_candidates": len(rights),
             "mask_fill": round(self.last_fill, 3),
+            "vanishing_y": round(shared[2], 3) if valid else None,
         }
 
         return annotated, left_points, right_points, info
