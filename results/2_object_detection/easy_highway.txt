@@ -1,0 +1,12 @@
+
+Video: lane_video.mp4  (295 frames)
+Objects after hood filter: 1611 (5.46 per frame)
+
+Tracking check (plain YOLO detection vs Phase 2's tracked boxes):
+  objects detected: 1729   tracked: 1611
+  detected but not tracked: 52 objects in 49 frames (16.6% of frames)
+  of those, in front and within 15 m: 0
+Picture: easy_highway_tracking_misses.jpg
+
+Timing (this machine, 960-pixel frames):
+  YOLO+track median   20.4 ms   p95   21.0 ms

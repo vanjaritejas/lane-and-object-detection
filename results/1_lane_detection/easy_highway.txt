@@ -8,8 +8,3 @@ Reasons:
 
 Timing (this machine):
   lane detection median   11.5 ms   p95   21.4 ms
-  YOLO + tracking median   20.9 ms   p95   21.8 ms
-  objects per frame (after ego filter): 5.46
-  frames with FRONT OBJECT NEAR alert: 0 (0.0%)
-  full frame     median   33.0 ms   p95   44.0 ms
-  overall throughput: ~30 FPS

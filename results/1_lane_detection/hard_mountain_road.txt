@@ -19,8 +19,3 @@ Yellow-line check on 839 accepted frames with visible yellow paint:
 
 Timing (this machine):
   lane detection median   25.9 ms   p95   34.0 ms
-  YOLO + tracking median   20.5 ms   p95   21.2 ms
-  objects per frame (after ego filter): 0.30
-  frames with FRONT OBJECT NEAR alert: 48 (4.0%)
-  full frame     median   47.2 ms   p95   55.1 ms
-  overall throughput: ~21 FPS

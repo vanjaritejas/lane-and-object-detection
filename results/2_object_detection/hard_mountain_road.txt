@@ -1,0 +1,12 @@
+
+Video: harder_challenge_video.mp4  (1199 frames)
+Objects after hood filter: 359 (0.30 per frame)
+
+Tracking check (plain YOLO detection vs Phase 2's tracked boxes):
+  objects detected: 474   tracked: 359
+  detected but not tracked: 102 objects in 86 frames (7.2% of frames)
+  of those, in front and within 15 m: 8
+Picture: hard_mountain_road_tracking_misses.jpg
+
+Timing (this machine, 960-pixel frames):
+  YOLO+track median   20.2 ms   p95   21.0 ms

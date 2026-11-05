@@ -8,12 +8,12 @@ A Python prototype that processes dashcam video in three phases. It finds the bo
 
 | Phase | File | What it does |
 |---|---|---|
-| 1. Lane boundaries | `src/phase1_lane_detection.py` | Classical computer vision (OpenCV): finds lane-marking pixels, fits the left and right boundaries of the current lane, accepts the lane only when geometry checks pass, and draws a smoothed lane |
-| 2. Objects | `src/phase2_object_detection.py` | Pretrained YOLO (COCO classes) with ByteTrack tracking and an approximate distance for each object |
-| 3. Decision | `src/phase3_decision_system.py` | Combines Phases 1 and 2: places each object relative to the detected lane and produces one prioritized status per frame |
+| 1. Lane detection | `src/phase1_lane_detection.py` | Classical computer vision (OpenCV): finds lane-marking pixels, fits the left and right boundaries of the current lane, accepts the lane only when geometry checks pass, and draws a smoothed lane |
+| 2. Object detection | `src/phase2_object_detection.py` | Pretrained YOLO (COCO classes) with ByteTrack tracking and an approximate distance for each object |
+| 3. Decision system | `src/phase3_decision_system.py` | Combines Phases 1 and 2: places each object relative to the detected lane and produces one prioritized status per frame |
 | Evaluation | `src/evaluate_pipeline.py`, `src/evaluate_phase3.py` | Run the phases without a display and report acceptance rates, failure reasons, accuracy checks, tracking losses, alert rates and timing |
 
-### Phase 1: lane boundaries
+### Phase 1: lane detection
 
 - **Marking pixels:** white and yellow paint, with thresholds that adapt to the road's brightness so sunlit or washed-out asphalt does not flood the mask. Frames dominated by glare or texture are reported as unreadable instead of guessed.
 - **Line candidates:** Hough voting on the centerline of each marking segment, so gaps between dashes do not matter. Each line is then grown upward to follow curves.
@@ -21,11 +21,11 @@ A Python prototype that processes dashcam video in three phases. It finds the bo
 - **Tracking:** smoothing, confirmation before accepting a large jump, and holding a briefly missing boundary for at most 4 frames. Held boundaries are labeled as held, and nothing is drawn when the lane is not accepted.
 - **Smoothed display:** each accepted boundary is sampled at fixed image rows and blended with previous frames, faster when the lane keeps moving. If the lane is hidden for 1-3 frames, the last lane stays on screen, fainter and labeled as held. `detect()` itself returns the raw boundaries, so every evaluation measures the detector, not the smoothing.
 
-### Phase 2: objects
+### Phase 2: object detection
 
 YOLO detects people, vehicles and animals, and ByteTrack keeps track IDs so distance estimates can be smoothed over time. Distance comes from a pinhole-camera estimate using an assumed real-world width per object class and an uncalibrated focal length, so it is approximate.
 
-### Phase 3: decision
+### Phase 3: decision system
 
 - **Lane-based zones:** an object is "front" when the point where it touches the road (the bottom-center of its box) lies inside the accepted lane, and "left" or "right" when it lies outside. Objects beyond the lane area, and frames without an accepted lane, fall back to fixed image slices (the middle 35%-65% of the width is "front").
 - **One status per frame, in priority order:** FRONT OBJECT NEAR (an object in front within an estimated 15 m), BOUNDARY DETECTION INCOMPLETE (no accepted lane), then FRONT OBJECT DETECTED or NO FRONT OBJECT DETECTED.
@@ -46,6 +46,8 @@ Measured on a MacBook Air (Apple M5), Python 3.11, OpenCV 5.0, with YOLO11n, usi
 
 ### Phase 1: lane detection (640-pixel frames)
 
+![Phase 1 lane detection](results/1_lane_detection/lane_detection_example.jpg)
+
 | | Easy | Medium | Hard |
 |---|---|---|---|
 | Frames with an accepted lane | 294 (99.7%) | 502 (99.8%) | 885 (73.8%) |
@@ -57,7 +59,9 @@ Measured on a MacBook Air (Apple M5), Python 3.11, OpenCV 5.0, with YOLO11n, usi
 \* An automated accuracy proxy: does the accepted left boundary sit on yellow paint? It covers the left boundary only.
 \** Not yet checked by eye; deep shadows can also fool the check itself.
 
-### Phases 2 and 3: objects, tracking and alerts (960-pixel frames)
+### Phase 2 (object detection) and Phase 3 (decision system), 960-pixel frames
+
+![Phase 2 object detection](results/2_object_detection/object_detection_example.jpg)
 
 Measured on the easy and hard videos. The medium video has almost no traffic, so it is used for lane detection (Phase 1) only.
 
@@ -83,7 +87,7 @@ Measured on Phase 1's 640-pixel output during development; this check is not yet
 ### What the results show
 
 - **Lane detection degrades with difficulty, and says so.** It is near-perfect on the easy and medium roads. On the hard road it shows a lane in 74% of frames and marks 84 frames as unreadable instead of guessing.
-- **Lane-based zones matter on curves.** On the hard video the two zone rules disagreed about the alert in 21 frames. In the 12 saved for review (`results/3_hard_mountain_road/zone_disagreements.jpg`), the lane rule was right every time: it removed 9 false alarms (oncoming vehicles in the other lane that sat in the middle of the image on a curve) and added 3 correct ones (a motorcycle just ahead at the left edge of the lane). On the straight highway the rules never disagreed.
+- **Lane-based zones matter on curves.** On the hard video the two zone rules disagreed about the alert in 21 frames. In the 12 saved for review (`results/3_decision_system/hard_mountain_road_zone_disagreements.jpg`), the lane rule was right every time: it removed 9 false alarms (oncoming vehicles in the other lane that sat in the middle of the image on a curve) and added 3 correct ones (a motorcycle just ahead at the left edge of the lane). On the straight highway the rules never disagreed.
 - **Tracking loses fast-moving traffic.** The share of detections that tracking drops rises from 3% on the highway to 22% on the mountain road, mostly vehicles passing quickly or at the edge of the frame. It also filters some false detections (an orange roadside post labeled "person"), so simply using raw detections is not the fix.
 - **Only the hard video exercises the alert logic.** The easy video never has an object in front within 15 m, so it cannot test the alerts.
 
@@ -124,14 +128,14 @@ lane-and-object-detection/
 │   ├── evaluate_pipeline.py         Evaluation: Phase 1 (and optionally Phase 2)
 │   └── evaluate_phase3.py           Evaluation: zones, tracking losses, alerts
 ├── results/
-│   ├── 1_easy_highway/              lane_video.mp4
-│   ├── 2_medium_rural_road/         random.mp4 (lane detection only)
-│   └── 3_hard_mountain_road/        harder_challenge_video.mp4
+│   ├── 1_lane_detection/            Phase 1 results (easy, medium and hard videos)
+│   ├── 2_object_detection/          Phase 2 results (easy and hard videos)
+│   └── 3_decision_system/           Phase 3 results (easy and hard videos)
 ├── videos/                          Test videos (not in the repository)
 └── models/                          YOLO weights (not in the repository)
 ```
 
-The easy and hard folders hold `phase1_2_evaluation.txt` (output of `evaluate_pipeline.py` with YOLO), `phase3_evaluation.txt` (output of `evaluate_phase3.py`) and `tracking_misses.jpg`; the hard folder also holds `zone_disagreements.jpg`. The medium folder holds only `phase1_evaluation.txt`, because that video is used to test lane detection.
+Each phase folder has one text file per video (`easy_highway.txt`, `medium_rural_road.txt`, `hard_mountain_road.txt`) and pictures: `lane_detection_example.jpg` for Phase 1; `object_detection_example.jpg` and the frames where tracking dropped a detection (`*_tracking_misses.jpg`) for Phase 2; the frames where the two zone rules disagreed (`hard_mountain_road_zone_disagreements.jpg`) for Phase 3. Phase 1 numbers come from `evaluate_pipeline.py`, Phase 2 and 3 numbers from `evaluate_phase3.py`.
 
 ## Running it
 
