@@ -59,14 +59,16 @@ Measured on a MacBook Air (Apple M5), Python 3.11, OpenCV 5.0, with YOLO11n, usi
 
 ### Phases 2 and 3: objects, tracking and alerts (960-pixel frames)
 
-| | Easy | Medium | Hard |
-|---|---|---|---|
-| Objects per frame (after the hood filter) | 5.46 | 0.07 | 0.30 |
-| Objects YOLO detected but tracking dropped | 52 of 1,729 (3%) | 7 of 43 (16%) | 102 of 474 (22%) |
-| ... of those, in front and within 15 m | 0 | 0 | 8 |
-| Objects placed by the lane (the rest use fixed slices) | 19% | 100% | 54% |
-| FRONT OBJECT NEAR frames: fixed slices -> lane-based | 0 -> 0 | 0 -> 0 | 48 -> 37 |
-| Phase 3 processing time (lane + YOLO, medians) | ~41 ms (~24 FPS) | ~46 ms (~22 FPS) | ~57 ms (~18 FPS) |
+Measured on the easy and hard videos. The medium video has almost no traffic, so it is used for lane detection (Phase 1) only.
+
+| | Easy | Hard |
+|---|---|---|
+| Objects per frame (after the hood filter) | 5.46 | 0.30 |
+| Objects YOLO detected but tracking dropped | 52 of 1,729 (3%) | 102 of 474 (22%) |
+| ... of those, in front and within 15 m | 0 | 8 |
+| Objects placed by the lane (the rest use fixed slices) | 19% | 54% |
+| FRONT OBJECT NEAR frames: fixed slices -> lane-based | 0 -> 0 | 48 -> 37 |
+| Phase 3 processing time (lane + YOLO, medians) | ~41 ms (~24 FPS) | ~57 ms (~18 FPS) |
 
 ### Lane smoothing (display)
 
@@ -83,7 +85,7 @@ Measured on Phase 1's 640-pixel output during development; this check is not yet
 - **Lane detection degrades with difficulty, and says so.** It is near-perfect on the easy and medium roads. On the hard road it shows a lane in 74% of frames and marks 84 frames as unreadable instead of guessing.
 - **Lane-based zones matter on curves.** On the hard video the two zone rules disagreed about the alert in 21 frames. In the 12 saved for review (`results/3_hard_mountain_road/zone_disagreements.jpg`), the lane rule was right every time: it removed 9 false alarms (oncoming vehicles in the other lane that sat in the middle of the image on a curve) and added 3 correct ones (a motorcycle just ahead at the left edge of the lane). On the straight highway the rules never disagreed.
 - **Tracking loses fast-moving traffic.** The share of detections that tracking drops rises from 3% on the highway to 22% on the mountain road, mostly vehicles passing quickly or at the edge of the frame. It also filters some false detections (an orange roadside post labeled "person"), so simply using raw detections is not the fix.
-- **Only the hard video exercises the alert logic.** The easy and medium videos never have an object in front within 15 m, so they cannot test the alerts.
+- **Only the hard video exercises the alert logic.** The easy video never has an object in front within 15 m, so it cannot test the alerts.
 
 ## From revision 4 to revision 5 (Phase 1)
 
@@ -123,13 +125,13 @@ lane-and-object-detection/
 │   └── evaluate_phase3.py           Evaluation: zones, tracking losses, alerts
 ├── results/
 │   ├── 1_easy_highway/              lane_video.mp4
-│   ├── 2_medium_rural_road/         random.mp4
+│   ├── 2_medium_rural_road/         random.mp4 (lane detection only)
 │   └── 3_hard_mountain_road/        harder_challenge_video.mp4
 ├── videos/                          Test videos (not in the repository)
 └── models/                          YOLO weights (not in the repository)
 ```
 
-Each results folder holds `phase1_2_evaluation.txt` (output of `evaluate_pipeline.py`), `phase3_evaluation.txt` (output of `evaluate_phase3.py`) and `tracking_misses.jpg`. The hard folder also holds `zone_disagreements.jpg`.
+The easy and hard folders hold `phase1_2_evaluation.txt` (output of `evaluate_pipeline.py` with YOLO), `phase3_evaluation.txt` (output of `evaluate_phase3.py`) and `tracking_misses.jpg`; the hard folder also holds `zone_disagreements.jpg`. The medium folder holds only `phase1_evaluation.txt`, because that video is used to test lane detection.
 
 ## Running it
 
@@ -142,7 +144,7 @@ pip install -r requirements.txt
 Put the three videos in `videos/` and the YOLO weights in `models/` (neither is included in this repository; Ultralytics downloads missing weights automatically). Run everything from the project folder:
 
 ```bash
-python src/phase1_lane_detection.py videos/random.mp4             # smoothed lane; add --no-smoothing for raw lines
+python src/phase1_lane_detection.py videos/lane_video.mp4           # smoothed lane; add --no-smoothing for raw lines
 python src/phase2_object_detection.py videos/lane_video.mp4
 python src/phase3_decision_system.py                               # hard video: smoothed lane + lane-based zones
 python src/phase3_decision_system.py videos/lane_video.mp4 --roi-bottom 0.93
@@ -152,7 +154,7 @@ python src/phase3_decision_system.py --fixed-zones --no-smoothing  # previous be
 Evaluation:
 
 ```bash
-python src/evaluate_pipeline.py videos/random.mp4 --yellow-check --model models/yolo11n.pt
+python src/evaluate_pipeline.py videos/harder_challenge_video.mp4 --roi-bottom 0.90 --yellow-check --model models/yolo11n.pt
 python src/evaluate_phase3.py videos/harder_challenge_video.mp4 --roi-bottom 0.90
 ```
 
