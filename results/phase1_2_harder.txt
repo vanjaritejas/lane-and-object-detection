@@ -1,0 +1,26 @@
+
+Video: harder_challenge_video.mp4  (1199 frames)
+Lane area accepted: 885/1199 (73.8%); 201 of those were holding one side from earlier frames
+Longest stretch of hidden frames: 66
+Reasons:
+    885  Boundary pair accepted
+     93  Right boundary missing
+     91  Left boundary missing
+     84  Markings unreadable (glare or heavy texture)
+     41  Neither boundary accepted
+      4  Vanishing point differs from learned one
+      1  Insufficient shared support
+
+Yellow-line check on 839 accepted frames with visible yellow paint:
+  left boundary on yellow line: 707 (84.3%)
+  left boundary off the line:   132 (15.7%)
+  off-line frames: [125, 183, 184, 185, 186, 187, 188, 189, 190, 214, 215, 216, 217, 218, 219, 220, 275, 276, 277, 287, 294, 295, 313, 341, 342, 343, 344, 345, 346, 347, 348, 350, 351, 359, 361, 362, 363, 364, 384, 385, 386, 399, 400, 402, 403, 404, 405, 406, 407, 410, 411, 412, 416, 417, 418, 419, 420, 425, 426, 427, 429, 430, 431, 432, 433, 442, 446, 448, 452, 566, 589, 590, 601, 602, 603, 705, 712, 713, 714, 716]
+  (Spot-check some of these frames by eye before quoting the figure.)
+
+Timing (this machine):
+  lane detection median   25.9 ms   p95   34.0 ms
+  YOLO + tracking median   20.5 ms   p95   21.2 ms
+  objects per frame (after ego filter): 0.30
+  frames with FRONT OBJECT NEAR alert: 48 (4.0%)
+  full frame     median   47.2 ms   p95   55.1 ms
+  overall throughput: ~21 FPS

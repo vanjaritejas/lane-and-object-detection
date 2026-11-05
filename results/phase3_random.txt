@@ -1,0 +1,25 @@
+
+Video: random.mp4  (503 frames)
+Lane area accepted: 502 frames (99.8%)
+Objects after hood filter: 36 (0.07 per frame)
+Objects the lane rule could place: 36 (100.0%); the rest used the fixed rule
+  fixed 'front' -> lane says left/right: 4
+  fixed left/right -> lane says 'front': 0
+
+FRONT OBJECT NEAR (estimated <= 15 m):
+  fixed zones: 0 frames (0.0%)
+  lane zones:  0 frames (0.0%)
+  only fixed alerted: 0   only lane alerted: 0
+No disagreement frames.
+
+Tracking check (plain YOLO detection vs Phase 2's tracked boxes):
+  objects detected: 43   tracked: 36
+  detected but not tracked: 7 objects in 7 frames (1.4% of frames)
+  of those, in front and within 15 m: 0
+Saved 7 of 7 tracking-miss frames to phase3_tracking_misses_random.jpg
+
+Timing (this machine, 960-pixel frames):
+  lane       median   25.5 ms   p95   30.6 ms
+  YOLO+track median   20.2 ms   p95   20.7 ms
+  full frame median   64.9 ms   p95   70.5 ms
+  (full frame includes the extra detection pass used only by this check)

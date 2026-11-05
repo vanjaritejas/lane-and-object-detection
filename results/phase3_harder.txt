@@ -1,0 +1,25 @@
+
+Video: harder_challenge_video.mp4  (1199 frames)
+Lane area accepted: 861 frames (71.8%)
+Objects after hood filter: 359 (0.30 per frame)
+Objects the lane rule could place: 193 (53.8%); the rest used the fixed rule
+  fixed 'front' -> lane says left/right: 62
+  fixed left/right -> lane says 'front': 11
+
+FRONT OBJECT NEAR (estimated <= 15 m):
+  fixed zones: 48 frames (4.0%)
+  lane zones:  37 frames (3.1%)
+  only fixed alerted: 16   only lane alerted: 5
+Saved 12 of 21 disagreement frames to phase3_disagreements_harder_challenge_video.jpg
+
+Tracking check (plain YOLO detection vs Phase 2's tracked boxes):
+  objects detected: 474   tracked: 359
+  detected but not tracked: 102 objects in 86 frames (7.2% of frames)
+  of those, in front and within 15 m: 8
+Saved 12 of 86 tracking-miss frames to phase3_tracking_misses_harder_challenge_video.jpg
+
+Timing (this machine, 960-pixel frames):
+  lane       median   36.6 ms   p95   46.7 ms
+  YOLO+track median   20.2 ms   p95   21.0 ms
+  full frame median   76.5 ms   p95   86.2 ms
+  (full frame includes the extra detection pass used only by this check)
