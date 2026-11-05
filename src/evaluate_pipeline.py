@@ -12,8 +12,8 @@ windows and prints:
 
 Examples:
     python src/evaluate_pipeline.py videos/lane_video.mp4
-    python src/evaluate_pipeline.py videos/random.mp4 --yellow-check
-    python src/evaluate_pipeline.py videos/random.mp4 --model models/yolo11n.pt
+    python src/evaluate_pipeline.py videos/harder_challenge_video.mp4 --roi-bottom 0.90 --yellow-check
+    python src/evaluate_pipeline.py videos/lane_video.mp4 --model models/yolo11n.pt
     python src/evaluate_pipeline.py videos/harder_challenge_video.mp4 --roi-bottom 0.90 --model models/yolo11n.pt
 
 Timing depends on the machine; report the hardware with any FPS figure.
