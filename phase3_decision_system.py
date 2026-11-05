@@ -1,19 +1,30 @@
 """
-Phase 3 — Harder Challenge Video Only
+Phase 3 - Lanes + objects + decision
 
-Model:
-    YOLO11 Nano
+Usage:
+    python phase3_decision_system.py                      # harder_challenge_video.mp4
+    python phase3_decision_system.py lane_video.mp4 --roi-bottom 0.93
+    python phase3_decision_system.py VIDEO --fixed-zones  # old image-slice zones
+    python phase3_decision_system.py VIDEO --no-smoothing # raw Phase 1 lines
 
-Video:
-    ~/Downloads/harder_challenge_video.mp4
+What it adds on top of Phase 1 (lanes) and Phase 2 (YOLO + tracking):
+    * Smooth lane drawing: each accepted boundary is sampled at fixed
+      image rows and blended with the previous frame, so the lines do
+      not jump around. When the lane keeps moving the same way (a real
+      curve or lane change) the blend follows faster. If Phase 1 hides
+      the lane for 1-3 frames, the last lane stays on screen, drawn
+      fainter and labelled as held; after that nothing is drawn.
+    * Lane-based zones: an object is "front" when the point where it
+      meets the road lies inside the accepted lane, "left"/"right" when
+      it lies outside. Without an accepted lane (or for objects beyond
+      the lane area) the old fixed image slices are used.
+    * One status per frame, in priority order: FRONT OBJECT NEAR,
+      BOUNDARY DETECTION INCOMPLETE, FRONT OBJECT DETECTED / NONE.
 
 Display:
-    LEFT      Video with the accepted lane area and object boxes
-    RIGHT     Phase 1 mask: white = marking pixels, gray = line
-              candidates, blue / green = chosen boundaries and the
-              points supporting them (press M to hide or show)
-    BELOW     Status, plus "Lane check": the reason Phase 1 accepted
-              or hid the lane in this frame
+    LEFT      Video with the smoothed lane area and object boxes
+    RIGHT     Phase 1 mask (press M to hide or show)
+    BELOW     Status, lane check and zone method
 
 Controls:
     Space     Pause / resume
@@ -21,14 +32,11 @@ Controls:
     M         Show / hide the mask view
     Q or Esc  Quit
 
-Requires the updated Phase 1 (revision 4) and Phase 2 Python files
-in the same folder as this script. The header shows which Phase 1
-revision was imported.
-
-Distances are approximate.
-Lane-change availability remains UNKNOWN.
+Requires Phase 1 (revision 5) and Phase 2 in the same folder.
+Distances are approximate. Lane-change availability remains UNKNOWN.
 """
 
+import argparse
 from pathlib import Path
 from collections import defaultdict, deque
 
@@ -46,8 +54,11 @@ from phase2_object_detection import (
 )
 
 
-VIDEO_PATH = (
-    Path.home() / "Downloads" / "harder_challenge_video.mp4"
+SCRIPT_DIR = Path(__file__).resolve().parent
+LOCAL_VIDEO = SCRIPT_DIR / "harder_challenge_video.mp4"
+DEFAULT_VIDEO = (
+    LOCAL_VIDEO if LOCAL_VIDEO.is_file()
+    else Path.home() / "Downloads" / "harder_challenge_video.mp4"
 )
 
 # Use the model beside this script if already downloaded.
@@ -56,13 +67,11 @@ MODEL_PATH = str(MODEL_FILE) if MODEL_FILE.is_file() else "yolo11n.pt"
 
 # In this video the car's hood starts at about 93% of the frame
 # height, so the lane search stops above it.
-LANE_SETTINGS = {
-    "roi_bottom": 0.90,
-}
+DEFAULT_ROI_BOTTOM = 0.90
 
 PHASE1_VERSION = getattr(phase1, "VERSION", "OLD FILE - replace it")
 
-WINDOW_NAME = "YOLO11 - Harder Challenge"
+WINDOW_NAME = "Phase 3 - Lanes + Objects"
 QUIT_KEYS = (ord("q"), ord("Q"), 27)
 SHOW_MASK_AT_START = True
 
@@ -84,6 +93,14 @@ FRONT_DISTANCE_THRESHOLD = 15.0
 # hood is the camera car itself, not traffic.
 EGO_BOX_MIN_WIDTH = 0.75     # fraction of frame width
 EGO_BOX_MIN_BOTTOM = 0.92    # fraction of frame height
+
+# Lane smoothing (display and zones). Values are per frame.
+SMOOTH_ROWS = 40              # image rows each boundary is sampled at
+SMOOTH_ALPHA = 0.2            # weight of the new measurement
+SMOOTH_FAST_ALPHA = 0.6       # used once the lane has moved 2+ frames
+SMOOTH_MOVING_SHIFT = 0.02    # mean row shift (fraction of width) = moving
+SMOOTH_HOLD_FRAMES = 3        # keep showing the last lane (fainter) this long
+SMOOTH_RESET_FRAMES = 6       # lane hidden this long: start fresh
 
 
 # ------------------------------------------------------------
@@ -157,6 +174,139 @@ def drop_ego_vehicle(detections, frame_shape):
     return kept
 
 
+class LaneSmoother:
+    """Blend the accepted lane boundaries over time, row by row."""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.rows = None
+        self.x = {"left": None, "right": None}
+        self.top = None
+        self.hidden = 0
+        self.moving = 0
+
+    @staticmethod
+    def _sample(points, rows):
+        ys = points[:, 1].astype(float)
+        xs = points[:, 0].astype(float)
+        order = np.argsort(ys)
+        return np.interp(rows, ys[order], xs[order],
+                         left=np.nan, right=np.nan)
+
+    def update(self, left_pts, right_pts, valid, y_top, y_bottom, width):
+        """Return (left, right, held): smoothed polylines or Nones."""
+        if not valid or left_pts is None or right_pts is None:
+            self.hidden += 1
+            if self.hidden >= SMOOTH_RESET_FRAMES:
+                self.reset()
+                return None, None, False
+            if self.hidden <= SMOOTH_HOLD_FRAMES and self.rows is not None:
+                return self._polyline("left"), self._polyline("right"), True
+            return None, None, False
+
+        self.hidden = 0
+        rows = np.linspace(y_top, y_bottom, SMOOTH_ROWS)
+        new = {
+            "left": self._sample(left_pts, rows),
+            "right": self._sample(right_pts, rows),
+        }
+        new_top = float(max(left_pts[:, 1].min(), right_pts[:, 1].min()))
+
+        if self.rows is None or not np.allclose(self.rows, rows):
+            self.rows, self.x, self.top = rows, new, new_top
+            self.moving = 0
+        else:
+            diffs = np.concatenate([
+                np.abs(new[side] - self.x[side])
+                for side in ("left", "right")
+            ])
+            diffs = diffs[np.isfinite(diffs)]
+            shift = float(np.mean(diffs)) / width if diffs.size else 1.0
+
+            # A real curve or lane change keeps moving; follow it faster.
+            self.moving = self.moving + 1 if shift > SMOOTH_MOVING_SHIFT else 0
+            alpha = SMOOTH_FAST_ALPHA if self.moving >= 2 else SMOOTH_ALPHA
+
+            for side in ("left", "right"):
+                old, cur = self.x[side], new[side]
+                both = np.isfinite(cur) & np.isfinite(old)
+                only_old = ~np.isfinite(cur) & np.isfinite(old)
+                blended = cur.copy()
+                blended[both] = alpha * cur[both] + (1 - alpha) * old[both]
+                blended[only_old] = old[only_old]
+                self.x[side] = blended
+
+            self.top = alpha * new_top + (1 - alpha) * self.top
+
+        return self._polyline("left"), self._polyline("right"), False
+
+    def _polyline(self, side):
+        keep = np.isfinite(self.x[side]) & (self.rows >= self.top)
+        if np.count_nonzero(keep) < 2:
+            return None
+        return np.round(np.column_stack(
+            (self.x[side][keep], self.rows[keep])
+        )).astype(np.int32)
+
+
+def draw_smoothed_lane(frame, left, right, held):
+    """Lane area and boundaries; fainter and thinner when held."""
+    output = frame.copy()
+    overlay = output.copy()
+    cv2.fillPoly(overlay, [np.vstack((left, right[::-1]))], (180, 180, 0))
+    weight = 0.10 if held else 0.22
+    output = cv2.addWeighted(overlay, weight, output, 1 - weight, 0)
+    for points, color in ((left, phase1.BLUE), (right, phase1.GREEN)):
+        cv2.polylines(output, [points], False, color,
+                      1 if held else 2, cv2.LINE_AA)
+    return output
+
+
+def lane_zone(detection, left_pts, right_pts):
+    """'left', 'front' or 'right' from the lane, or None if unknown."""
+    if left_pts is None or right_pts is None:
+        return None
+
+    x1, _, x2, y2 = detection["bbox"]
+    foot_x = (x1 + x2) / 2.0
+
+    top = max(left_pts[0, 1], right_pts[0, 1])
+    bottom = min(left_pts[-1, 1], right_pts[-1, 1])
+
+    if y2 < top:
+        return None              # beyond the lane area: can't tell
+
+    y = min(y2, bottom)          # very close: use the lane's bottom edge
+    left_x = np.interp(y, left_pts[:, 1], left_pts[:, 0])
+    right_x = np.interp(y, right_pts[:, 1], right_pts[:, 0])
+
+    if foot_x < left_x:
+        return "left"
+    if foot_x > right_x:
+        return "right"
+    return "front"
+
+
+def assign_zones(detections, left_pts, right_pts, use_lane):
+    """Re-zone objects by the lane where possible; return a panel note."""
+    if not use_lane:
+        return "Fixed image zones"
+
+    placed = 0
+    for detection in detections:
+        zone = lane_zone(detection, left_pts, right_pts)
+        if zone is not None:
+            detection["zone"] = zone
+            placed += 1
+
+    if not detections:
+        return "Zones: by lane when shown"
+    return (f"Zones: by lane {placed}/{len(detections)}, "
+            f"image slice {len(detections) - placed}/{len(detections)}")
+
+
 def boundary_status(lane_info, side):
     if not lane_info[f"{side}_detected"]:
         return "NOT DETECTED"
@@ -187,7 +337,7 @@ def make_assessment(zones, lane_info):
     if front is None:
         return (
             "NO FRONT OBJECT DETECTED",
-            "No tracked object in the fixed front image zone",
+            "No tracked object in the front zone",
             GRAY,
         )
 
@@ -309,6 +459,7 @@ def add_information_panel(
     detections,
     frame_index,
     paused,
+    zone_note="Fixed image zones",
 ):
     """Place all status information below the video."""
     top_h = view.shape[0]
@@ -371,7 +522,7 @@ def add_information_panel(
 
     put_text(
         output,
-        "Lane changes: UNKNOWN | Approx. distances | Fixed image zones",
+        f"Lane changes: UNKNOWN | Approx. distances | {zone_note}",
         (15, top_h + 169),
         YELLOW,
         0.43,
@@ -409,6 +560,7 @@ def render(result, frame_index, paused, show_mask):
         result["detections"],
         frame_index,
         paused,
+        result.get("zone_note", "Fixed image zones"),
     )
 
 
@@ -422,11 +574,11 @@ def size_window(display):
 # ------------------------------------------------------------
 
 def process_frame(
-    frame, frame_index, lane_detector, model, histories, last_seen
+    frame, frame_index, lane_detector, model, histories, last_seen,
+    smoother, options,
 ):
-    # Both detectors receive the unannotated frame. Phase 1's
-    # returned view (accepted lane only) is the drawing base.
-    lane_view, _, _, lane_info = lane_detector.detect(frame)
+    # Both detectors receive the unannotated frame.
+    lane_view, left_pts, right_pts, lane_info = lane_detector.detect(frame)
 
     # Use Phase 2's detection data, not its HUD image.
     _, detections = detect_objects(
@@ -438,40 +590,82 @@ def process_frame(
     )
 
     detections = drop_ego_vehicle(detections, frame.shape)
+    h, w = frame.shape[:2]
+    valid = lane_info["lane_area_valid"]
+
+    held = False
+    if options["smooth"]:
+        left_s, right_s, held = smoother.update(
+            left_pts, right_pts, valid,
+            lane_detector.top * h, lane_detector.bottom * h, w,
+        )
+        if left_s is not None and right_s is not None:
+            base = draw_smoothed_lane(frame, left_s, right_s, held)
+        else:
+            left_s = right_s = None
+            base = frame.copy()
+    else:
+        left_s, right_s = (left_pts, right_pts) if valid else (None, None)
+        base = lane_view
+
+    if held:
+        lane_info = dict(
+            lane_info,
+            reason=lane_info["reason"] + " | showing last lane (held)",
+        )
+
+    # Zones only trust a lane Phase 1 accepted in this frame.
+    zone_note = assign_zones(
+        detections,
+        None if held else left_s,
+        None if held else right_s,
+        options["lane_zones"],
+    )
 
     return {
-        "scene": draw_scene(lane_view, detections),
+        "scene": draw_scene(base, detections),
         "debug": lane_detector.last_debug.copy(),
         "lane_info": lane_info,
         "zones": summarise_zones(detections),
         "detections": detections,
+        "zone_note": zone_note,
     }
 
 
-def run_full_pipeline():
-    if not VIDEO_PATH.is_file():
-        raise FileNotFoundError(
-            "Video not found. Place harder_challenge_video.mp4 "
-            f"in Downloads.\nExpected path: {VIDEO_PATH}"
-        )
+def run_full_pipeline(
+    video_path=DEFAULT_VIDEO,
+    model_path=MODEL_PATH,
+    roi_bottom=DEFAULT_ROI_BOTTOM,
+    lane_zones=True,
+    smooth=True,
+):
+    video_path = Path(video_path).expanduser()
+
+    if not video_path.is_file():
+        raise FileNotFoundError(f"Video not found: {video_path}")
 
     print(f"Phase 1 file: {phase1.__file__}", flush=True)
     print(f"Phase 1 version: {PHASE1_VERSION}", flush=True)
-    print(f"Opening video: {VIDEO_PATH}", flush=True)
+    print(f"Opening video: {video_path}", flush=True)
+    print(f"Zones: {'lane-based' if lane_zones else 'fixed image slices'} | "
+          f"Lane smoothing: {'on' if smooth else 'off'} | "
+          f"ROI bottom: {roi_bottom}", flush=True)
 
-    cap = cv2.VideoCapture(str(VIDEO_PATH))
+    cap = cv2.VideoCapture(str(video_path))
 
     if not cap.isOpened():
         cap.release()
         raise RuntimeError(
-            f"OpenCV could not open this video: {VIDEO_PATH}"
+            f"OpenCV could not open this video: {video_path}"
         )
 
     histories = defaultdict(
         lambda: deque(maxlen=SMOOTHING_WINDOW)
     )
 
-    lane_detector = LaneDetector(**LANE_SETTINGS)
+    lane_detector = LaneDetector(roi_bottom=roi_bottom)
+    smoother = LaneSmoother()
+    options = {"lane_zones": lane_zones, "smooth": smooth}
     last_seen = {}
     frame_index = 0
     exit_reason = "Playback stopped."
@@ -493,11 +687,11 @@ def run_full_pipeline():
         )
 
         put_text(
-            preview, "harder_challenge_video.mp4",
+            preview, video_path.name,
             (15, frame.shape[0] + 30), WHITE, 0.55,
         )
         put_text(
-            preview, "Loading YOLO11 Nano...",
+            preview, f"Loading {Path(model_path).name}...",
             (15, frame.shape[0] + 60), YELLOW, 0.6,
         )
         put_text(
@@ -515,8 +709,8 @@ def run_full_pipeline():
             print("Stopped before model loading.")
             return
 
-        print(f"Loading model: {MODEL_PATH}", flush=True)
-        model = YOLO(MODEL_PATH)
+        print(f"Loading model: {model_path}", flush=True)
+        model = YOLO(model_path)
 
         print("Click the video window for keyboard controls.")
         print("Space: pause/resume | N: step | M: mask | Q / Esc: quit")
@@ -544,6 +738,7 @@ def run_full_pipeline():
                 result = process_frame(
                     frame, frame_index, lane_detector,
                     model, histories, last_seen,
+                    smoother, options,
                 )
 
                 if frame_index % 30 == 0:
@@ -598,4 +793,23 @@ def run_full_pipeline():
 
 
 if __name__ == "__main__":
-    run_full_pipeline()
+    parser = argparse.ArgumentParser(description="Phase 3: lanes + objects.")
+    parser.add_argument("video", nargs="?", default=str(DEFAULT_VIDEO),
+                        help="Video path (default: harder_challenge_video.mp4)")
+    parser.add_argument("--model", default=MODEL_PATH, help="YOLO weights")
+    parser.add_argument("--roi-bottom", type=float, default=DEFAULT_ROI_BOTTOM,
+                        help="Lane search bottom, fraction of frame height "
+                             "(0.90 stays above a visible hood)")
+    parser.add_argument("--fixed-zones", action="store_true",
+                        help="Use the old fixed image slices for zones")
+    parser.add_argument("--no-smoothing", action="store_true",
+                        help="Draw Phase 1's raw lines without smoothing")
+    args = parser.parse_args()
+
+    run_full_pipeline(
+        video_path=args.video,
+        model_path=args.model,
+        roi_bottom=args.roi_bottom,
+        lane_zones=not args.fixed_zones,
+        smooth=not args.no_smoothing,
+    )
