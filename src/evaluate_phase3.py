@@ -22,8 +22,8 @@ disagree, how many objects tracking hid, timing, and saves contact sheets
 of the frames where the zone rules disagree and where tracking missed.
 
 Usage:
-    python evaluate_phase3.py lane_video.mp4
-    python evaluate_phase3.py ~/Downloads/harder_challenge_video.mp4 --roi-bottom 0.90
+    python src/evaluate_phase3.py videos/lane_video.mp4
+    python src/evaluate_phase3.py videos/harder_challenge_video.mp4 --roi-bottom 0.90
 """
 
 import argparse
@@ -38,6 +38,9 @@ from ultralytics import YOLO
 import phase1_lane_detection as p1
 import phase2_object_detection as p2
 from phase3_decision_system import FRONT_DISTANCE_THRESHOLD, drop_ego_vehicle
+
+_MODEL_FILE = Path(__file__).resolve().parent.parent / "models" / "yolo11n.pt"
+DEFAULT_MODEL = str(_MODEL_FILE) if _MODEL_FILE.is_file() else "yolo11n.pt"
 
 SHEET_TILES = 12
 TILE_WIDTH = 480
@@ -160,7 +163,7 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("video")
     parser.add_argument("--roi-bottom", type=float, default=None)
-    parser.add_argument("--model", default="yolo11n.pt")
+    parser.add_argument("--model", default=DEFAULT_MODEL)
     args = parser.parse_args()
 
     video = Path(args.video).expanduser()

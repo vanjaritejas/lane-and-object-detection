@@ -41,7 +41,7 @@ The region of interest can be set per video:
     LaneDetector(roi_bottom=0.89)          # stop above a visible hood
 
 Default video search:
-    1. lane_video.mp4 beside this Python file
+    1. videos/lane_video.mp4 in the project folder
     2. ~/Downloads/lane_video.mp4
 
 Controls:
@@ -77,7 +77,8 @@ VERSION = "revision 5"
 # ------------------------------------------------------------
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-LOCAL_VIDEO = SCRIPT_DIR / "lane_video.mp4"
+PROJECT_DIR = SCRIPT_DIR.parent
+LOCAL_VIDEO = PROJECT_DIR / "videos" / "lane_video.mp4"
 DOWNLOAD_VIDEO = Path.home() / "Downloads" / "lane_video.mp4"
 
 DEFAULT_VIDEO = (
@@ -1260,7 +1261,7 @@ def run_phase1(video_path, smooth=True):
     if not video_path.is_file():
         raise FileNotFoundError(
             f"Video not found: {video_path}\n"
-            "Place lane_video.mp4 beside this Python file "
+            "Place lane_video.mp4 in the videos folder "
             "or pass its full path when running."
         )
 

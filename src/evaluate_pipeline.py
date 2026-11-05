@@ -11,10 +11,10 @@ windows and prints:
   * optional: how often the "FRONT OBJECT NEAR" alert fired
 
 Examples:
-    python evaluate_pipeline.py lane_video.mp4
-    python evaluate_pipeline.py random.mp4 --yellow-check
-    python evaluate_pipeline.py random.mp4 --model yolov8n.pt
-    python evaluate_pipeline.py harder.mp4 --roi-bottom 0.90 --model yolo11n.pt
+    python src/evaluate_pipeline.py videos/lane_video.mp4
+    python src/evaluate_pipeline.py videos/random.mp4 --yellow-check
+    python src/evaluate_pipeline.py videos/random.mp4 --model models/yolo11n.pt
+    python src/evaluate_pipeline.py videos/harder_challenge_video.mp4 --roi-bottom 0.90 --model models/yolo11n.pt
 
 Timing depends on the machine; report the hardware with any FPS figure.
 """

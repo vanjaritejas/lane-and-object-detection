@@ -8,10 +8,10 @@ A Python prototype that processes dashcam video in three phases. It finds the bo
 
 | Phase | File | What it does |
 |---|---|---|
-| 1. Lane boundaries | `phase1_lane_detection.py` | Classical computer vision (OpenCV): finds lane-marking pixels, fits the left and right boundaries of the current lane, accepts the lane only when geometry checks pass, and draws a smoothed lane |
-| 2. Objects | `phase2_object_detection.py` | Pretrained YOLO (COCO classes) with ByteTrack tracking and an approximate distance for each object |
-| 3. Decision | `phase3_decision_system.py` | Combines Phases 1 and 2: places each object relative to the detected lane and produces one prioritized status per frame |
-| Evaluation | `evaluate_pipeline.py`, `evaluate_phase3.py` | Run the phases without a display and report acceptance rates, failure reasons, accuracy checks, tracking losses, alert rates and timing |
+| 1. Lane boundaries | `src/phase1_lane_detection.py` | Classical computer vision (OpenCV): finds lane-marking pixels, fits the left and right boundaries of the current lane, accepts the lane only when geometry checks pass, and draws a smoothed lane |
+| 2. Objects | `src/phase2_object_detection.py` | Pretrained YOLO (COCO classes) with ByteTrack tracking and an approximate distance for each object |
+| 3. Decision | `src/phase3_decision_system.py` | Combines Phases 1 and 2: places each object relative to the detected lane and produces one prioritized status per frame |
+| Evaluation | `src/evaluate_pipeline.py`, `src/evaluate_phase3.py` | Run the phases without a display and report acceptance rates, failure reasons, accuracy checks, tracking losses, alert rates and timing |
 
 ### Phase 1: lane boundaries
 
@@ -81,7 +81,7 @@ Measured on Phase 1's 640-pixel output during development; this check is not yet
 ### What the results show
 
 - **Lane detection degrades with difficulty, and says so.** It is near-perfect on the easy and medium roads. On the hard road it shows a lane in 74% of frames and marks 84 frames as unreadable instead of guessing.
-- **Lane-based zones matter on curves.** On the hard video the two zone rules disagreed about the alert in 21 frames. In the 12 saved for review (`results/phase3_disagreements_harder_challenge_video.jpg`), the lane rule was right every time: it removed 9 false alarms (oncoming vehicles in the other lane that sat in the middle of the image on a curve) and added 3 correct ones (a motorcycle just ahead at the left edge of the lane). On the straight highway the rules never disagreed.
+- **Lane-based zones matter on curves.** On the hard video the two zone rules disagreed about the alert in 21 frames. In the 12 saved for review (`results/3_hard_mountain_road/zone_disagreements.jpg`), the lane rule was right every time: it removed 9 false alarms (oncoming vehicles in the other lane that sat in the middle of the image on a curve) and added 3 correct ones (a motorcycle just ahead at the left edge of the lane). On the straight highway the rules never disagreed.
 - **Tracking loses fast-moving traffic.** The share of detections that tracking drops rises from 3% on the highway to 22% on the mountain road, mostly vehicles passing quickly or at the edge of the frame. It also filters some false detections (an orange roadside post labeled "person"), so simply using raw detections is not the fix.
 - **Only the hard video exercises the alert logic.** The easy and medium videos never have an object in front within 15 m, so they cannot test the alerts.
 
@@ -109,6 +109,28 @@ On the hard video revision 5 is not an improvement: frames with a lane went from
 - Distances use assumed object widths and an uncalibrated focal length. Vehicles seen side-on look closer than they are, because the box includes the car's length.
 - Phase 1 runs lane detection on 640-pixel frames and Phase 3 on 960-pixel frames, so their lane numbers differ slightly.
 
+## Project structure
+
+```
+lane-and-object-detection/
+├── README.md
+├── requirements.txt
+├── src/
+│   ├── phase1_lane_detection.py     Phase 1: lane boundaries, smoothed display
+│   ├── phase2_object_detection.py   Phase 2: YOLO detection, tracking, distance
+│   ├── phase3_decision_system.py    Phase 3: lane-based zones and status
+│   ├── evaluate_pipeline.py         Evaluation: Phase 1 (and optionally Phase 2)
+│   └── evaluate_phase3.py           Evaluation: zones, tracking losses, alerts
+├── results/
+│   ├── 1_easy_highway/              lane_video.mp4
+│   ├── 2_medium_rural_road/         random.mp4
+│   └── 3_hard_mountain_road/        harder_challenge_video.mp4
+├── videos/                          Test videos (not in the repository)
+└── models/                          YOLO weights (not in the repository)
+```
+
+Each results folder holds `phase1_2_evaluation.txt` (output of `evaluate_pipeline.py`), `phase3_evaluation.txt` (output of `evaluate_phase3.py`) and `tracking_misses.jpg`. The hard folder also holds `zone_disagreements.jpg`.
+
 ## Running it
 
 ```bash
@@ -117,24 +139,24 @@ conda activate cv_project
 pip install -r requirements.txt
 ```
 
-Place the videos in the project folder (they are not included in this repository), then:
+Put the three videos in `videos/` and the YOLO weights in `models/` (neither is included in this repository; Ultralytics downloads missing weights automatically). Run everything from the project folder:
 
 ```bash
-python phase1_lane_detection.py random.mp4                     # smoothed lane; add --no-smoothing for raw lines
-python phase2_object_detection.py lane_video.mp4
-python phase3_decision_system.py                                # hard video: smoothed lane + lane-based zones
-python phase3_decision_system.py lane_video.mp4 --roi-bottom 0.93
-python phase3_decision_system.py --fixed-zones --no-smoothing   # previous behavior, for comparison
+python src/phase1_lane_detection.py videos/random.mp4             # smoothed lane; add --no-smoothing for raw lines
+python src/phase2_object_detection.py videos/lane_video.mp4
+python src/phase3_decision_system.py                               # hard video: smoothed lane + lane-based zones
+python src/phase3_decision_system.py videos/lane_video.mp4 --roi-bottom 0.93
+python src/phase3_decision_system.py --fixed-zones --no-smoothing  # previous behavior, for comparison
 ```
 
 Evaluation:
 
 ```bash
-python evaluate_pipeline.py random.mp4 --yellow-check --model yolo11n.pt
-python evaluate_phase3.py harder_challenge_video.mp4 --roi-bottom 0.90
+python src/evaluate_pipeline.py videos/random.mp4 --yellow-check --model models/yolo11n.pt
+python src/evaluate_phase3.py videos/harder_challenge_video.mp4 --roi-bottom 0.90
 ```
 
-Window controls: Space to pause, N to step one frame, Q to quit (M shows or hides the mask in Phase 3). The YOLO weights download automatically on first run.
+Window controls: Space to pause, N to step one frame, Q to quit (M shows or hides the mask in Phase 3).
 
 ## Data
 

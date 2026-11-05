@@ -2,10 +2,10 @@
 Phase 3 - Lanes + objects + decision
 
 Usage:
-    python phase3_decision_system.py                      # harder_challenge_video.mp4
-    python phase3_decision_system.py lane_video.mp4 --roi-bottom 0.93
-    python phase3_decision_system.py VIDEO --fixed-zones  # old image-slice zones
-    python phase3_decision_system.py VIDEO --no-smoothing # raw Phase 1 lines
+    python src/phase3_decision_system.py                      # harder_challenge_video.mp4
+    python src/phase3_decision_system.py videos/lane_video.mp4 --roi-bottom 0.93
+    python src/phase3_decision_system.py VIDEO --fixed-zones  # old image-slice zones
+    python src/phase3_decision_system.py VIDEO --no-smoothing # raw Phase 1 lines
 
 What it adds on top of Phase 1 (lanes) and Phase 2 (YOLO + tracking):
     * Smooth lane drawing: each accepted boundary is sampled at fixed
@@ -60,14 +60,15 @@ from phase2_object_detection import (
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-LOCAL_VIDEO = SCRIPT_DIR / "harder_challenge_video.mp4"
+PROJECT_DIR = SCRIPT_DIR.parent
+LOCAL_VIDEO = PROJECT_DIR / "videos" / "harder_challenge_video.mp4"
 DEFAULT_VIDEO = (
     LOCAL_VIDEO if LOCAL_VIDEO.is_file()
     else Path.home() / "Downloads" / "harder_challenge_video.mp4"
 )
 
 # Use the model beside this script if already downloaded.
-MODEL_FILE = Path(__file__).resolve().parent / "yolo11n.pt"
+MODEL_FILE = PROJECT_DIR / "models" / "yolo11n.pt"
 MODEL_PATH = str(MODEL_FILE) if MODEL_FILE.is_file() else "yolo11n.pt"
 
 # In this video the car's hood starts at about 93% of the frame
