@@ -34,11 +34,11 @@ YOLO detects people, vehicles and animals, and ByteTrack keeps track IDs so dist
 
 ## Test videos
 
-| Level | Video | Frames | What makes it hard |
-|---|---|---|---|
-| Easy | lane_video.mp4 | 295 | Straight highway, clear markings, heavy traffic in other lanes |
-| Medium | random.mp4 | 503 | Rural road, curves, grass along the edge, yellow edge line |
-| Hard | harder_challenge_video.mp4 | 1,199 | Mountain road, sharp curves, deep shadows, glare, motorcycles; the car's hood is in view, so the lane search stops at 90% of the frame height |
+| Level | Video | Frames | What makes it hard | Mainly tests |
+|---|---|---|---|---|
+| Easy | lane_video.mp4 | 295 | Straight highway, clear markings, heavy traffic in other lanes | Phase 2: objects (5.5 per frame) |
+| Medium | random.mp4 | 503 | Rural road, curves, grass along the edge, yellow edge line | Phase 1: lanes (almost no traffic, 0.07 objects per frame) |
+| Hard | harder_challenge_video.mp4 | 1,199 | Mountain road, sharp curves, deep shadows, glare, motorcycles; the car's hood is in view, so the lane search stops at 90% of the frame height | All three phases |
 
 ## Results
 
