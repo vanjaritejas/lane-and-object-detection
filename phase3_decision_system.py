@@ -45,7 +45,12 @@ import numpy as np
 from ultralytics import YOLO
 
 import phase1_lane_detection as phase1
-from phase1_lane_detection import LaneDetector, SUPPORT_BINS
+from phase1_lane_detection import (
+    LaneDetector,
+    LaneSmoother,
+    SUPPORT_BINS,
+    draw_smoothed_lane,
+)
 from phase2_object_detection import (
     DISPLAY_WIDTH,
     SMOOTHING_WINDOW,
@@ -93,14 +98,6 @@ FRONT_DISTANCE_THRESHOLD = 15.0
 # hood is the camera car itself, not traffic.
 EGO_BOX_MIN_WIDTH = 0.75     # fraction of frame width
 EGO_BOX_MIN_BOTTOM = 0.92    # fraction of frame height
-
-# Lane smoothing (display and zones). Values are per frame.
-SMOOTH_ROWS = 40              # image rows each boundary is sampled at
-SMOOTH_ALPHA = 0.2            # weight of the new measurement
-SMOOTH_FAST_ALPHA = 0.6       # used once the lane has moved 2+ frames
-SMOOTH_MOVING_SHIFT = 0.02    # mean row shift (fraction of width) = moving
-SMOOTH_HOLD_FRAMES = 3        # keep showing the last lane (fainter) this long
-SMOOTH_RESET_FRAMES = 6       # lane hidden this long: start fresh
 
 
 # ------------------------------------------------------------
@@ -172,96 +169,6 @@ def drop_ego_vehicle(detections, frame_shape):
         kept.append(detection)
 
     return kept
-
-
-class LaneSmoother:
-    """Blend the accepted lane boundaries over time, row by row."""
-
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.rows = None
-        self.x = {"left": None, "right": None}
-        self.top = None
-        self.hidden = 0
-        self.moving = 0
-
-    @staticmethod
-    def _sample(points, rows):
-        ys = points[:, 1].astype(float)
-        xs = points[:, 0].astype(float)
-        order = np.argsort(ys)
-        return np.interp(rows, ys[order], xs[order],
-                         left=np.nan, right=np.nan)
-
-    def update(self, left_pts, right_pts, valid, y_top, y_bottom, width):
-        """Return (left, right, held): smoothed polylines or Nones."""
-        if not valid or left_pts is None or right_pts is None:
-            self.hidden += 1
-            if self.hidden >= SMOOTH_RESET_FRAMES:
-                self.reset()
-                return None, None, False
-            if self.hidden <= SMOOTH_HOLD_FRAMES and self.rows is not None:
-                return self._polyline("left"), self._polyline("right"), True
-            return None, None, False
-
-        self.hidden = 0
-        rows = np.linspace(y_top, y_bottom, SMOOTH_ROWS)
-        new = {
-            "left": self._sample(left_pts, rows),
-            "right": self._sample(right_pts, rows),
-        }
-        new_top = float(max(left_pts[:, 1].min(), right_pts[:, 1].min()))
-
-        if self.rows is None or not np.allclose(self.rows, rows):
-            self.rows, self.x, self.top = rows, new, new_top
-            self.moving = 0
-        else:
-            diffs = np.concatenate([
-                np.abs(new[side] - self.x[side])
-                for side in ("left", "right")
-            ])
-            diffs = diffs[np.isfinite(diffs)]
-            shift = float(np.mean(diffs)) / width if diffs.size else 1.0
-
-            # A real curve or lane change keeps moving; follow it faster.
-            self.moving = self.moving + 1 if shift > SMOOTH_MOVING_SHIFT else 0
-            alpha = SMOOTH_FAST_ALPHA if self.moving >= 2 else SMOOTH_ALPHA
-
-            for side in ("left", "right"):
-                old, cur = self.x[side], new[side]
-                both = np.isfinite(cur) & np.isfinite(old)
-                only_old = ~np.isfinite(cur) & np.isfinite(old)
-                blended = cur.copy()
-                blended[both] = alpha * cur[both] + (1 - alpha) * old[both]
-                blended[only_old] = old[only_old]
-                self.x[side] = blended
-
-            self.top = alpha * new_top + (1 - alpha) * self.top
-
-        return self._polyline("left"), self._polyline("right"), False
-
-    def _polyline(self, side):
-        keep = np.isfinite(self.x[side]) & (self.rows >= self.top)
-        if np.count_nonzero(keep) < 2:
-            return None
-        return np.round(np.column_stack(
-            (self.x[side][keep], self.rows[keep])
-        )).astype(np.int32)
-
-
-def draw_smoothed_lane(frame, left, right, held):
-    """Lane area and boundaries; fainter and thinner when held."""
-    output = frame.copy()
-    overlay = output.copy()
-    cv2.fillPoly(overlay, [np.vstack((left, right[::-1]))], (180, 180, 0))
-    weight = 0.10 if held else 0.22
-    output = cv2.addWeighted(overlay, weight, output, 1 - weight, 0)
-    for points, color in ((left, phase1.BLUE), (right, phase1.GREEN)):
-        cv2.polylines(output, [points], False, color,
-                      1 if held else 2, cv2.LINE_AA)
-    return output
 
 
 def lane_zone(detection, left_pts, right_pts):

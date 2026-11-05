@@ -27,6 +27,16 @@ Revision 5 changes (found by measuring revision 4 on a second video):
       The fixed limit assumed one camera pitch and rejected correct
       lane pairs when the horizon sat slightly lower in the frame.
 
+Display smoothing (detection itself is unchanged):
+    * The window draws a smoothed lane: each accepted boundary is
+      sampled at fixed image rows and blended with the previous frame,
+      faster when the lane keeps moving (curves, lane changes). If the
+      lane is hidden for 1-3 frames the last lane stays on screen,
+      fainter and labelled as held. The right-hand diagnostic view
+      still shows the raw boundaries. Use --no-smoothing for raw lines.
+    * detect() returns the raw boundaries, so evaluations measure the
+      detector, not the smoothing. Phase 3 uses the same LaneSmoother.
+
 The region of interest can be set per video:
     LaneDetector(roi_bottom=0.89)          # stop above a visible hood
 
@@ -154,6 +164,14 @@ SMOOTHING = 0.5                # weight of the new measurement
 JUMP_FRACTION = 0.05           # larger lateral jumps need confirmation
 JUMP_CONFIRM_FRAMES = 2
 HOLD_FRAMES = 4
+
+# Display smoothing (LaneSmoother). Values are per frame.
+SMOOTH_ROWS = 40              # image rows each boundary is sampled at
+SMOOTH_ALPHA = 0.2            # weight of the new measurement
+SMOOTH_FAST_ALPHA = 0.6       # used once the lane has moved 2+ frames
+SMOOTH_MOVING_SHIFT = 0.02    # mean row shift (fraction of width) = moving
+SMOOTH_HOLD_FRAMES = 3        # keep showing the last lane (fainter) this long
+SMOOTH_RESET_FRAMES = 6       # lane hidden this long: start fresh
 
 
 # ------------------------------------------------------------
@@ -1063,6 +1081,96 @@ class LaneDetector:
         return debug
 
 
+class LaneSmoother:
+    """Blend the accepted lane boundaries over time, row by row."""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.rows = None
+        self.x = {"left": None, "right": None}
+        self.top = None
+        self.hidden = 0
+        self.moving = 0
+
+    @staticmethod
+    def _sample(points, rows):
+        ys = points[:, 1].astype(float)
+        xs = points[:, 0].astype(float)
+        order = np.argsort(ys)
+        return np.interp(rows, ys[order], xs[order],
+                         left=np.nan, right=np.nan)
+
+    def update(self, left_pts, right_pts, valid, y_top, y_bottom, width):
+        """Return (left, right, held): smoothed polylines or Nones."""
+        if not valid or left_pts is None or right_pts is None:
+            self.hidden += 1
+            if self.hidden >= SMOOTH_RESET_FRAMES:
+                self.reset()
+                return None, None, False
+            if self.hidden <= SMOOTH_HOLD_FRAMES and self.rows is not None:
+                return self._polyline("left"), self._polyline("right"), True
+            return None, None, False
+
+        self.hidden = 0
+        rows = np.linspace(y_top, y_bottom, SMOOTH_ROWS)
+        new = {
+            "left": self._sample(left_pts, rows),
+            "right": self._sample(right_pts, rows),
+        }
+        new_top = float(max(left_pts[:, 1].min(), right_pts[:, 1].min()))
+
+        if self.rows is None or not np.allclose(self.rows, rows):
+            self.rows, self.x, self.top = rows, new, new_top
+            self.moving = 0
+        else:
+            diffs = np.concatenate([
+                np.abs(new[side] - self.x[side])
+                for side in ("left", "right")
+            ])
+            diffs = diffs[np.isfinite(diffs)]
+            shift = float(np.mean(diffs)) / width if diffs.size else 1.0
+
+            # A real curve or lane change keeps moving; follow it faster.
+            self.moving = self.moving + 1 if shift > SMOOTH_MOVING_SHIFT else 0
+            alpha = SMOOTH_FAST_ALPHA if self.moving >= 2 else SMOOTH_ALPHA
+
+            for side in ("left", "right"):
+                old, cur = self.x[side], new[side]
+                both = np.isfinite(cur) & np.isfinite(old)
+                only_old = ~np.isfinite(cur) & np.isfinite(old)
+                blended = cur.copy()
+                blended[both] = alpha * cur[both] + (1 - alpha) * old[both]
+                blended[only_old] = old[only_old]
+                self.x[side] = blended
+
+            self.top = alpha * new_top + (1 - alpha) * self.top
+
+        return self._polyline("left"), self._polyline("right"), False
+
+    def _polyline(self, side):
+        keep = np.isfinite(self.x[side]) & (self.rows >= self.top)
+        if np.count_nonzero(keep) < 2:
+            return None
+        return np.round(np.column_stack(
+            (self.x[side][keep], self.rows[keep])
+        )).astype(np.int32)
+
+
+def draw_smoothed_lane(frame, left, right, held):
+    """Lane area and boundaries; fainter and thinner when held."""
+    output = frame.copy()
+    overlay = output.copy()
+    cv2.fillPoly(overlay, [np.vstack((left, right[::-1]))], (180, 180, 0))
+    weight = 0.10 if held else 0.22
+    output = cv2.addWeighted(overlay, weight, output, 1 - weight, 0)
+    for points, color in ((left, BLUE), (right, GREEN)):
+        cv2.polylines(output, [points], False, color,
+                      1 if held else 2, cv2.LINE_AA)
+    return output
+
+
 # Compatible with the latest curved-boundary Phase 3.
 _default_detector = LaneDetector()
 
@@ -1084,7 +1192,8 @@ def window_open():
         return False
 
 
-def build_display(annotated, debug, info, index, paused):
+def build_display(annotated, debug, info, index, paused,
+                  area=None, title="VIDEO + ESTIMATED LANE"):
     combined = np.hstack((annotated, debug))
     h, w = combined.shape[:2]
 
@@ -1094,7 +1203,7 @@ def build_display(annotated, debug, info, index, paused):
         value=(20, 20, 20),
     )
 
-    put_text(display, "VIDEO + ESTIMATED LANE", (15, 25))
+    put_text(display, title, (15, 25))
     put_text(
         display,
         "MASK + CANDIDATES (GRAY) + CHOSEN BOUNDARIES",
@@ -1102,7 +1211,8 @@ def build_display(annotated, debug, info, index, paused):
     )
 
     state = "PAUSED" if paused else "PLAYING"
-    area = "DISPLAYED" if info["lane_area_valid"] else "HIDDEN"
+    if area is None:
+        area = "DISPLAYED" if info["lane_area_valid"] else "HIDDEN"
 
     def side_text(side):
         text = f"{info[side + '_support']}/{SUPPORT_BINS}"
@@ -1144,7 +1254,7 @@ def build_display(annotated, debug, info, index, paused):
     return display
 
 
-def run_phase1(video_path):
+def run_phase1(video_path, smooth=True):
     video_path = Path(video_path).expanduser()
 
     if not video_path.is_file():
@@ -1161,6 +1271,12 @@ def run_phase1(video_path):
         raise RuntimeError(f"Cannot open video: {video_path}")
 
     detector = LaneDetector()
+    smoother = LaneSmoother()
+    area = None
+    title = (
+        "VIDEO + ESTIMATED LANE (smoothed)" if smooth
+        else "VIDEO + ESTIMATED LANE (raw)"
+    )
     paused = False
     advance = True
     index = -1
@@ -1192,7 +1308,22 @@ def run_phase1(video_path):
                     ),
                 )
 
-                annotated, _, _, info = detector.detect(frame)
+                annotated, left_pts, right_pts, info = detector.detect(frame)
+
+                if smooth:
+                    fh, fw = frame.shape[:2]
+                    left_s, right_s, held = smoother.update(
+                        left_pts, right_pts, info["lane_area_valid"],
+                        detector.top * fh, detector.bottom * fh, fw,
+                    )
+                    if left_s is not None and right_s is not None:
+                        annotated = draw_smoothed_lane(
+                            frame, left_s, right_s, held
+                        )
+                        area = "DISPLAYED (held)" if held else "DISPLAYED"
+                    else:
+                        annotated = frame.copy()
+                        area = "HIDDEN"
 
                 if index % 30 == 0:
                     print(
@@ -1210,6 +1341,8 @@ def run_phase1(video_path):
                 info,
                 index,
                 paused,
+                area,
+                title,
             )
 
             cv2.imshow(WINDOW_NAME, display)
@@ -1229,6 +1362,7 @@ def run_phase1(video_path):
                     raise RuntimeError("Could not restart the video.")
 
                 detector.reset()
+                smoother.reset()
                 index = -1
                 advance = True
                 continue
@@ -1258,5 +1392,11 @@ if __name__ == "__main__":
         help="Optional full path to a video.",
     )
 
+    parser.add_argument(
+        "--no-smoothing",
+        action="store_true",
+        help="Draw the raw Phase 1 boundaries without smoothing.",
+    )
+
     args = parser.parse_args()
-    run_phase1(args.video)
+    run_phase1(args.video, smooth=not args.no_smoothing)
